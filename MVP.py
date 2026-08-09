@@ -98,6 +98,22 @@ class OneShotParallelDecomposedLLM(nn.Module):
         return logits
 
 
+class LengthPredictor(nn.Module):
+    def __init__(self, embed_dim: int, max_n: int = 16):
+        super().__init__()
+        # Target Vector x를 받아 1~max_n 중 몇 개가 필요한지 분류하는 단일 Linear Layer
+        self.fc = nn.Sequential(
+            nn.Linear(embed_dim, 64),
+            nn.ReLU(),
+            nn.Linear(64, max_n),  # 각 길이(1~max_n)에 대한 확률 로짓
+        )
+
+    def forward(self, x: torch.Tensor):
+        # x: (batch_size, embed_dim)
+        # returns: length_logits (batch_size, max_n)
+        return self.fc(x)
+
+
 # ---------------------------------------------------------------
 # 3. 실제 원샷(One-Shot) 학습 루프 실행
 # ---------------------------------------------------------------
