@@ -176,23 +176,22 @@ if __name__ == "__main__":
 
     print("\n=== 학습 시작 (Target Vector + Length Predictor 원샷 학습) ===")
     ai.train()
-    epochs = 60
+    # LR 상향 및 Epochs 300으로 변경
+    optimizer = torch.optim.AdamW(trainable_params, lr=3e-3)
+    epochs = 300
 
     for epoch in range(1, epochs + 1):
         total_loss = 0.0
-
         for prompt_text, target_text in training_data:
             optimizer.zero_grad()
-
             prompt_ids = ai.tokenizer.encode(prompt_text, return_tensors="pt").to(
                 device
             )
 
-            # Tokenizer가 실제로 변환한 진짜 토큰 목록 추출 (단어 수 X)
-            target_ids_raw = ai.tokenizer.encode(target_text, add_special_tokens=False)
-            actual_length = len(target_ids_raw)  # 예: 5개 토큰
+            # Qwen Tokenizer의 정확한 Encode
+            target_ids_raw = ai.tokenizer.encode(target_text)
+            actual_length = len(target_ids_raw)
 
-            # MAX_N 길이에 맞춰 정답 토큰 텐서 생성 및 패딩(-100은 Loss 계산 시 제외)
             padded_target_ids = torch.full(
                 (1, MAX_N), -100, dtype=torch.long, device=device
             )
@@ -200,29 +199,23 @@ if __name__ == "__main__":
                 target_ids_raw, device=device
             )
 
-            # Forward
             logits, length_logits, _ = ai(prompt_ids)
 
-            # 1) 토큰 손실 계산
             token_loss = loss_token_fn(
                 logits.view(-1, ai.vocab_size), padded_target_ids.view(-1)
             )
-
-            # 2) 길이 예측 손실 계산 (인덱스는 0 ~ MAX_N-1 이므로 actual_length - 1)
             length_target = torch.tensor([actual_length - 1], device=device)
             length_loss = loss_length_fn(length_logits, length_target)
 
-            # 총 손실 = 토큰 손실 + 0.1 * 길이 손실
-            loss = token_loss + 0.1 * length_loss
+            loss = token_loss + 0.2 * length_loss
             loss.backward()
             optimizer.step()
-
             total_loss += loss.item()
 
-        if epoch % 20 == 0 or epoch == 1:
-            print(
-                f"Epoch {epoch:2d}/{epochs} | Loss: {total_loss / len(training_data):.4f}"
-            )
+            if epoch % 20 == 0 or epoch == 1:
+                print(
+                    f"Epoch {epoch:2d}/{epochs} | Loss: {total_loss / len(training_data):.4f}"
+                )
 
     # ===============================================================
     # 6. 추론 테스트 (원샷 자동 길이 측정 및 생성)
