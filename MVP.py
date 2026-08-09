@@ -148,7 +148,7 @@ class OneShotDecomposedAI(nn.Module):
 # 5. 실제 데이터 토큰화 기반 학습 및 실행 테스트
 # ===============================================================
 if __name__ == "__main__":
-    MAX_N = 16
+    MAX_N = 5
     device = "cuda" if torch.cuda.is_available() else "cpu"
 
     # 모델 생성 후 float32로 통일 지정
@@ -212,10 +212,12 @@ if __name__ == "__main__":
             optimizer.step()
             total_loss += loss.item()
 
-            if epoch % 20 == 0 or epoch == 1:
-                print(
-                    f"Epoch {epoch:2d}/{epochs} | Loss: {total_loss / len(training_data):.4f}"
-                )
+        if epoch % 20 == 0:
+            print(
+                f"Epoch {epoch:2d}/{epochs} | Loss: {total_loss / len(training_data):.4f}"
+            )
+        if epoch == 1:
+            print("started training...")
 
     # ===============================================================
     # 6. 추론 테스트 (원샷 자동 길이 측정 및 생성)
