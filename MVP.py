@@ -146,11 +146,15 @@ class OneShotDecomposedAI(nn.Module):
 # 5. 실제 데이터 토큰화 기반 학습 및 실행 테스트
 # ===============================================================
 if __name__ == "__main__":
-    MAX_N = 16  # 원샷으로 처리 가능한 최대 토큰 개수
+    MAX_N = 16
     device = "cuda" if torch.cuda.is_available() else "cpu"
 
-    # CPU/내장 GPU에 최적화된 Qwen2.5-0.5B 모델 사용
-    ai = OneShotDecomposedAI(model_name="Qwen/Qwen2.5-0.5B", max_n=MAX_N).to(device)
+    # 1. 모델 생성
+    ai = OneShotDecomposedAI(model_name="Qwen/Qwen2.5-0.5B", max_n=MAX_N)
+
+    # 2. 백본 모델(Qwen)의 dtype에 맞춰 전체 모델 dtype 통일
+    model_dtype = ai.embedding.weight.dtype  # 보통 bfloat16 또는 float16
+    ai = ai.to(device=device, dtype=model_dtype)
 
     # 학습할 파라미터 (Attention + Decomposer + LengthPredictor)
     trainable_params = (
