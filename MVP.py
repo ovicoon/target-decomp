@@ -86,7 +86,9 @@ class OneShotDecomposedAI(nn.Module):
 
         print(f"[{model_name}] 백본 및 Pre-trained Vocab 로드 중...")
         self.tokenizer = AutoTokenizer.from_pretrained(model_name)
-        base_llm = AutoModelForCausalLM.from_pretrained(model_name)
+        base_llm = AutoModelForCausalLM.from_pretrained(
+            model_name, torch_dtype=torch.float32  # bfloat16 대신 float32 강제 지정
+        )
 
         self.vocab_size = base_llm.config.vocab_size
         self.embed_dim = base_llm.config.hidden_size
@@ -149,12 +151,9 @@ if __name__ == "__main__":
     MAX_N = 16
     device = "cuda" if torch.cuda.is_available() else "cpu"
 
-    # 1. 모델 생성
+    # 모델 생성 후 float32로 통일 지정
     ai = OneShotDecomposedAI(model_name="Qwen/Qwen2.5-0.5B", max_n=MAX_N)
-
-    # 2. 백본 모델(Qwen)의 dtype에 맞춰 전체 모델 dtype 통일
-    model_dtype = ai.embedding.weight.dtype  # 보통 bfloat16 또는 float16
-    ai = ai.to(device=device, dtype=model_dtype)
+    ai = ai.to(device=device, dtype=torch.float32)
 
     # 학습할 파라미터 (Attention + Decomposer + LengthPredictor)
     trainable_params = (
