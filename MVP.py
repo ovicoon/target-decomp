@@ -50,7 +50,12 @@ class VectorDecomposer(nn.Module):
 # 2. Non-Autoregressive One-Shot AI Pipeline
 # ---------------------------------------------------------------
 class OneShotParallelDecomposedLLM(nn.Module):
-    def __init__(self, model_name: str = "gpt2", N_tokens: int = 4, alpha: float = 1.0):
+    def __init__(
+        self,
+        model_name: str = "Qwen/Qwen2.5-0.5B",
+        N_tokens: int = 4,
+        alpha: float = 1.0,
+    ):
         super().__init__()
         self.N = N_tokens
 
@@ -162,7 +167,7 @@ if __name__ == "__main__":
     print("\n=== 학습 완료 후 원샷 생성 테스트 ===")
     model.eval()
     with torch.no_grad():
-        test_prompt = "Artificial Intelligence is"
+        test_prompt = "My name is"
         test_ids = model.tokenizer.encode(test_prompt, return_tensors="pt").to(device)
 
         # 단 한 번의 Forward Pass로 N개 토큰 생성
