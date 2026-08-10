@@ -250,8 +250,8 @@ if __name__ == "__main__":
     print(f"소요 시간: {end_time - start_time:.4f}초")
 
     # 추론 테스트
-    print("\n=== 추론 테스트 ===")
-    test_prompt = "Artificial Intelligence is"
+    print("\n=== 테스트 ===")
+    test_prompt = input(">>>: ")
     gen_text, pred_len = ai.generate(test_prompt, device=device)
     print(f"입력 프롬프트 : '{test_prompt}'")
     print(f"예측된 토큰 수 : {pred_len}개 토큰")
