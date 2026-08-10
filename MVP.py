@@ -1,3 +1,4 @@
+import re
 import ast
 import time
 import pandas as pd
@@ -152,11 +153,13 @@ if __name__ == "__main__":
     # ===============================================================
     MAX_SAMPLES = 100  # <--- 원하는 최대 데이터(대화) 개수 지정 (예: 1000개만 사용)
 
-    # 1. train.csv 불러오기 및 데이터 전처리
+    ai.tokenizer.padding_side = "left"
+    if ai.tokenizer.pad_token is None:
+        ai.tokenizer.pad_token = ai.tokenizer.eos_token
+
     print("\n'train.csv' 로딩 및 파싱 중...")
     df = pd.read_csv("train.csv")
 
-    # 데이터 개수가 너무 많으면 일부분만 추출 (Sampling)
     if len(df) > MAX_SAMPLES:
         df = df.iloc[:MAX_SAMPLES]
         print(f"데이터셋을 상위 {MAX_SAMPLES}개로 제한했습니다.")
@@ -164,40 +167,45 @@ if __name__ == "__main__":
     formatted_prompts = []
     targets = []
 
-    ai.tokenizer.padding_side = "left"
-    if ai.tokenizer.pad_token is None:
-        ai.tokenizer.pad_token = ai.tokenizer.eos_token
-
     for idx, row in df.iterrows():
         try:
-            # 문자열 형태의 리스트를 실제 파이썬 리스트로 변환
-            utterances = ast.literal_eval(row["dialog"])
+            dialog_str = str(row["dialog"])
+
+            # [핵심] 정규식으로 따옴표 형태에 구애받지 않고 개별 문장만 추출
+            # 큰따옴표/작은따옴표로 둘러싸인 텍스트 영역을 정밀하게 캡처합니다.
+            utterances = re.findall(r"['\"]+(.*?)['\"]+", dialog_str, re.DOTALL)
+
+            # 불필요한 공백 제거 및 빈 문장 필터링
+            utterances = [u.strip() for u in utterances if u.strip()]
+
+            # 대화 문장이 최소 2개 이상이어야 (질문-답변) 학습 가능
             if len(utterances) < 2:
                 continue
 
-            # 짝수번째=User, 홀수번째=Assistant 로 턴(Turn) 할당
+            # 짝수번째=user, 홀수번째=assistant 지정
             messages = []
-            for i, text in enumerate(utterances[:-1]):  # 마지막 전까지는 Context
+            for i, text in enumerate(utterances[:-1]):
                 role = "user" if i % 2 == 0 else "assistant"
-                messages.append({"role": role, "content": text.strip()})
+                messages.append({"role": role, "content": text})
 
-            # 마지막 발화가 만약 User 턴 자리라면 수동으로 user 턴 추가 지정
-            if len(utterances) % 2 == 1:
-                # 마지막 직전까지 짝수개였으면 마지막은 User 턴
-                pass
-
-            # 프롬프트 Chat Template 적용
+            # Chat Template 적용
             formatted = ai.tokenizer.apply_chat_template(
                 messages, tokenize=False, add_generation_prompt=True
             )
 
             formatted_prompts.append(formatted)
-            targets.append(utterances[-1].strip())  # 맨 마지막 문장이 AI의 Target
+            targets.append(utterances[-1])  # 마지막 발화를 AI의 정답(Target)으로 설정
 
         except Exception as e:
             continue
 
     print(f"총 {len(formatted_prompts)}개의 대화 데이터셋 구성 완료!")
+
+    # 데이터가 제대로 파싱되었는지 방어 코드
+    if len(formatted_prompts) == 0:
+        raise ValueError(
+            "데이터가 0개 수집되었습니다! CSV 파일의 'dialog' 컬럼 형식을 다시 확인해주세요."
+        )
 
     # 2. 토크나이징 및 Tensor 구축
     batch_prompt_ids = ai.tokenizer(
