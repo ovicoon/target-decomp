@@ -51,18 +51,19 @@ class SingleStepAttention(nn.Module):
 # 2. Vector Decomposer (Attention 미사용 수식 분해)
 # ===============================================================
 class VectorDecomposer(nn.Module):
-
     def __init__(self, max_n: int, dim: int, alpha: float = 1.0):
         super().__init__()
-        self.max_n = max_n
-        self.dim = dim
-        self.alpha = alpha
-        self.w = nn.Parameter(torch.empty(max_n, dim, dim))
-        nn.init.xavier_uniform_(self.w)
+        self.w1 = nn.Parameter(torch.empty(max_n, dim, dim))
+        self.w2 = nn.Parameter(torch.empty(max_n, dim, dim))
+        nn.init.xavier_uniform_(self.w1)
+        nn.init.xavier_uniform_(self.w2)
+        self.act = nn.GELU()
 
     def forward(self, x: torch.Tensor) -> torch.Tensor:
-        v = torch.einsum("bd, ndk -> bnk", x, self.w)
-        return v
+        v1 = torch.einsum("bd, ndk -> bnk", x, self.w1)
+        v1 = self.act(v1)  # 비선형 변환 추가!
+        v2 = torch.einsum("bnk, nkk -> bnk", v1, self.w2)
+        return v2
 
 
 # ===============================================================
