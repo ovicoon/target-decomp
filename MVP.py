@@ -132,9 +132,17 @@ class OneShotDecomposedAI(nn.Module):
     def generate(self, prompt_text: str, device: str = "cpu") -> str:
         self.eval()
         with torch.no_grad():
-            prompt_ids = self.tokenizer.encode(prompt_text, return_tensors="pt").to(
-                device
+            # User 메시지 구조 생성
+            messages = [{"role": "user", "content": prompt_text}]
+
+            # Chat Template 적용 (맨 끝에 <|im_start|>assistant\n 자동 추가)
+            formatted_prompt = self.tokenizer.apply_chat_template(
+                messages, tokenize=False, add_generation_prompt=True
             )
+
+            prompt_ids = self.tokenizer.encode(
+                formatted_prompt, return_tensors="pt"
+            ).to(device)
             logits, length_logits, _ = self.forward(prompt_ids)
 
             # 1. 예측된 토큰 개수 K 추출 (1 ~ MAX_N)
@@ -173,24 +181,32 @@ if __name__ == "__main__":
     scaler = torch.amp.GradScaler()
 
     training_data = [
-        ("Artificial Intelligence is", " getting smarter every day."),
-        ("Deep learning models can", " solve complex problems."),
-        ("Python is a popular", " programming language."),
-        ("Natural language processing allows", " computers to understand text."),
+        ("Artificial Intelligence is", "getting smarter every day."),
+        ("Deep learning models can", "solve complex problems."),
+        ("Python is a popular", "programming language."),
+        ("Natural language processing allows", "computers to understand text."),
     ]
 
-    # 사전 토큰화 및 데이터 준비
-    prompts = [item[0] for item in training_data]
-    targets = [item[1] for item in training_data]
+    # 1. Chat Template 형태로 입력 프롬프트 변환
+    formatted_prompts = []
+    for user_msg, _ in training_data:
+        messages = [{"role": "user", "content": user_msg}]
+        formatted = ai.tokenizer.apply_chat_template(
+            messages, tokenize=False, add_generation_prompt=True
+        )
+        formatted_prompts.append(formatted)
 
     ai.tokenizer.padding_side = "left"
     if ai.tokenizer.pad_token is None:
         ai.tokenizer.pad_token = ai.tokenizer.eos_token
 
+    # 2. 질문(Prompt) 토크나이징 (Chat Template 적용 상태)
     batch_prompt_ids = ai.tokenizer(
-        prompts, return_tensors="pt", padding=True
+        formatted_prompts, return_tensors="pt", padding=True
     ).input_ids.to(device)
 
+    # 3. 답변(Target) 토크나이징
+    targets = [item[1] for item in training_data]
     batch_target_list = [ai.tokenizer.encode(t) for t in targets]
     actual_lengths = [len(t) for t in batch_target_list]
 
