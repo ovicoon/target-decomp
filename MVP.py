@@ -208,7 +208,7 @@ if __name__ == "__main__":
     # 3. 답변(Target) 토크나이징
     targets = [item[1] for item in training_data]
     batch_target_list = [ai.tokenizer.encode(t) for t in targets]
-    actual_lengths = [len(t) for t in batch_target_list]
+    actual_lengths = [min(len(t), MAX_N) for t in batch_target_list]
 
     padded_targets = torch.full(
         (len(training_data), MAX_N), -100, dtype=torch.long, device=device
