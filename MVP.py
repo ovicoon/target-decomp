@@ -1,5 +1,5 @@
-import re
 import ast
+import re
 import time
 import pandas as pd
 import torch
@@ -22,7 +22,12 @@ class SingleStepAttention(nn.Module):
         self.v_proj = nn.Linear(embed_dim, target_dim)
         self.scale = target_dim**-0.5
 
-    def forward(self, query: torch.Tensor, key_value: torch.Tensor) -> torch.Tensor:
+    def forward(
+        self,
+        query: torch.Tensor,
+        key_value: torch.Tensor,
+        attn_mask: torch.Tensor = None,
+    ) -> torch.Tensor:
         if query.dim() == 2:
             query = query.unsqueeze(1)
 
@@ -31,8 +36,14 @@ class SingleStepAttention(nn.Module):
         V = self.v_proj(key_value)
 
         attn_scores = torch.matmul(Q, K.transpose(-2, -1)) * self.scale
-        attn_weights = F.softmax(attn_scores, dim=-1)
 
+        # 패딩(PAD) 토큰 영역 마스킹 처리하여 x가 뭉개지는 것 방지
+        if attn_mask is not None:
+            # attn_mask: (B, Seq_Len) -> (B, 1, Seq_Len)
+            mask = attn_mask.unsqueeze(1)
+            attn_scores = attn_scores.masked_fill(mask == 0, -1e9)
+
+        attn_weights = F.softmax(attn_scores, dim=-1)
         target_x = torch.matmul(attn_weights, V).squeeze(1)
         return target_x
 
@@ -88,7 +99,9 @@ class OneShotDecomposedAI(nn.Module):
 
         print(f"[{model_name}] 백본 및 Pre-trained Vocab 로드 중...")
         self.tokenizer = AutoTokenizer.from_pretrained(model_name)
-        base_llm = AutoModelForCausalLM.from_pretrained(model_name, dtype=torch.float32)
+        base_llm = AutoModelForCausalLM.from_pretrained(
+            model_name, torch_dtype=torch.float32
+        )
 
         self.vocab_size = base_llm.config.vocab_size
         self.embed_dim = base_llm.config.hidden_size
@@ -105,18 +118,30 @@ class OneShotDecomposedAI(nn.Module):
         self.decomposer = VectorDecomposer(max_n=max_n, dim=self.embed_dim, alpha=alpha)
         self.length_predictor = LengthPredictor(embed_dim=self.embed_dim, max_n=max_n)
 
-    def forward(self, prompt_ids: torch.Tensor):
+    def forward(self, prompt_ids: torch.Tensor, attention_mask: torch.Tensor = None):
         embeddings = self.embedding(prompt_ids)
-        query = embeddings[:, -1:, :]
 
-        target_x = self.attention_target(query=query, key_value=embeddings)
+        # [수정 핵심] PAD가 아닌 프롬프트의 '진짜 마지막 토큰'을 Query로 사용
+        if attention_mask is not None:
+            last_token_idx = attention_mask.sum(dim=-1) - 1
+            batch_size = prompt_ids.size(0)
+            query = embeddings[
+                torch.arange(batch_size, device=prompt_ids.device),
+                last_token_idx,
+            ].unsqueeze(1)
+        else:
+            query = embeddings[:, -1:, :]
+
+        target_x = self.attention_target(
+            query=query, key_value=embeddings, attn_mask=attention_mask
+        )
         length_logits = self.length_predictor(target_x)
         v = self.decomposer(target_x)
         logits = self.lm_head(v)
 
         return logits, length_logits, target_x
 
-    def generate(self, prompt_text: str, device: str = "cpu") -> str:
+    def generate(self, prompt_text: str, device: str = "cpu"):
         self.eval()
         with torch.no_grad():
             messages = [{"role": "user", "content": prompt_text}]
@@ -124,10 +149,21 @@ class OneShotDecomposedAI(nn.Module):
                 messages, tokenize=False, add_generation_prompt=True
             )
 
-            prompt_ids = self.tokenizer.encode(
-                formatted_prompt, return_tensors="pt"
-            ).to(device)
-            logits, length_logits, _ = self.forward(prompt_ids)
+            prompt_inputs = self.tokenizer(formatted_prompt, return_tensors="pt").to(
+                device
+            )
+            prompt_ids = prompt_inputs.input_ids
+            attn_mask = prompt_inputs.attention_mask
+
+            logits, length_logits, target_x = self.forward(
+                prompt_ids, attention_mask=attn_mask
+            )
+
+            # [디버깅 용] target_x 벡터가 달라지는지 눈으로 직접 확인!
+            sample_val = target_x[0, :3].detach().cpu().numpy()
+            print(
+                f"[DEBUG x 벡터 샘플]: {sample_val[0]:.4f}, {sample_val[1]:.4f}, {sample_val[2]:.4f}"
+            )
 
             predicted_len = torch.argmax(length_logits, dim=-1).item() + 1
             pred_ids = torch.argmax(logits[0, :predicted_len, :], dim=-1)
@@ -147,10 +183,6 @@ if __name__ == "__main__":
     ai = torch.compile(ai, mode="default")
     ai = ai.to(device=device)
 
-    # 1. train.csv 불러오기 및 데이터 전처리
-    # ===============================================================
-    # 데이터 제한 설정
-    # ===============================================================
     MAX_SAMPLES = 100
 
     ai.tokenizer.padding_side = "left"
@@ -170,51 +202,38 @@ if __name__ == "__main__":
     for idx, row in df.iterrows():
         try:
             dialog_str = str(row["dialog"])
-
-            # [핵심] 정규식으로 따옴표 형태에 구애받지 않고 개별 문장만 추출
-            # 큰따옴표/작은따옴표로 둘러싸인 텍스트 영역을 정밀하게 캡처합니다.
             utterances = re.findall(r"['\"]+(.*?)['\"]+", dialog_str, re.DOTALL)
-
-            # 불필요한 공백 제거 및 빈 문장 필터링
             utterances = [u.strip() for u in utterances if u.strip()]
 
-            # 대화 문장이 최소 2개 이상이어야 (질문-답변) 학습 가능
             if len(utterances) < 2:
                 continue
 
-            # 짝수번째=user, 홀수번째=assistant 지정
             messages = []
             for i, text in enumerate(utterances[:-1]):
                 role = "user" if i % 2 == 0 else "assistant"
                 messages.append({"role": role, "content": text})
 
-            # Chat Template 적용
             formatted = ai.tokenizer.apply_chat_template(
                 messages, tokenize=False, add_generation_prompt=True
             )
 
             formatted_prompts.append(formatted)
-            targets.append(utterances[-1])  # 마지막 발화를 AI의 정답(Target)으로 설정
+            targets.append(utterances[-1])
 
         except Exception as e:
             continue
 
     print(f"총 {len(formatted_prompts)}개의 대화 데이터셋 구성 완료!")
 
-    # 데이터가 제대로 파싱되었는지 방어 코드
     if len(formatted_prompts) == 0:
-        raise ValueError(
-            "데이터가 0개 수집되었습니다! CSV 파일의 'dialog' 컬럼 형식을 다시 확인해주세요."
-        )
+        raise ValueError("데이터가 0개 수집되었습니다!")
 
     # 2. 토크나이징 및 Tensor 구축
-    batch_prompt_ids = ai.tokenizer(
-        formatted_prompts, return_tensors="pt", padding=True
-    ).input_ids.to(device)
+    tokenized_batch = ai.tokenizer(formatted_prompts, return_tensors="pt", padding=True)
+    batch_prompt_ids = tokenized_batch.input_ids.to(device)
+    batch_attention_mask = tokenized_batch.attention_mask.to(device)
 
     batch_target_list = [ai.tokenizer.encode(t) for t in targets]
-
-    # [핵심] CUDA Assert 에러 방지 (MAX_N 상한선 클램핑)
     actual_lengths = [min(len(t), MAX_N) for t in batch_target_list]
 
     padded_targets = torch.full(
@@ -246,7 +265,9 @@ if __name__ == "__main__":
     # Warmup / Compile
     optimizer.zero_grad(set_to_none=True)
     with torch.amp.autocast("cuda"):
-        logits_w, length_logits_w, _ = ai(batch_prompt_ids)
+        logits_w, length_logits_w, _ = ai(
+            batch_prompt_ids, attention_mask=batch_attention_mask
+        )
         loss_w = loss_token_fn(
             logits_w.view(-1, ai.vocab_size), padded_targets.view(-1)
         ) + 0.2 * loss_length_fn(length_logits_w, length_targets)
@@ -262,7 +283,9 @@ if __name__ == "__main__":
         optimizer.zero_grad(set_to_none=True)
 
         with torch.amp.autocast("cuda"):
-            logits, length_logits, _ = ai(batch_prompt_ids)
+            logits, length_logits, _ = ai(
+                batch_prompt_ids, attention_mask=batch_attention_mask
+            )
 
             token_loss = loss_token_fn(
                 logits.view(-1, ai.vocab_size), padded_targets.view(-1)
@@ -291,4 +314,4 @@ if __name__ == "__main__":
 
         gen_text, pred_len = ai.generate(test_prompt, device=device)
         print(f"예측된 토큰 수 : {pred_len}개")
-        print(f"AI 원샷 답변 : '{gen_text}'")
+        print(f"AI 원샷 답변 : '{gen_text}'\n")
