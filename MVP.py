@@ -160,7 +160,7 @@ class OneShotDecomposedAI(nn.Module):
 # 5. 실제 데이터 토큰화 기반 학습 및 실행 테스트
 # ===============================================================
 if __name__ == "__main__":
-    MAX_N = 5
+    MAX_N = 16
     device = "cuda" if torch.cuda.is_available() else "cpu"
 
     ai = OneShotDecomposedAI(model_name="Qwen/Qwen2.5-0.5B", max_n=MAX_N)
