@@ -43,7 +43,8 @@ class VectorDecomposer(nn.Module):
         self.dim = dim
         self.alpha = alpha
         # 최대 MAX_N개 위치에 대한 슬롯 가중치 w
-        self.w = nn.Parameter(torch.randn(max_n, dim))
+        self.w = nn.Parameter(torch.empty(max_n, dim, dim))
+        nn.init.xavier_uniform_(self.w)
 
     def forward(self, x: torch.Tensor) -> torch.Tensor:
         """
@@ -57,7 +58,7 @@ class VectorDecomposer(nn.Module):
         x_term = x.unsqueeze(1) / self.max_n
         w_term = self.alpha * (w_diff / std_w).unsqueeze(0)
 
-        v = x_term + w_term
+        v = torch.einsum("bd, ndk -> bnk", x, self.w)
         return v
 
 
