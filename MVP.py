@@ -1,7 +1,10 @@
+import time
 import torch
 import torch.nn as nn
 import torch.nn.functional as F
 from transformers import AutoTokenizer, AutoModelForCausalLM
+
+torch.backends.cudnn.benchmark = True
 
 
 # ===============================================================
@@ -151,22 +154,23 @@ if __name__ == "__main__":
     MAX_N = 5
     device = "cuda" if torch.cuda.is_available() else "cpu"
 
-    # 모델 생성 후 float32로 통일 지정
     ai = OneShotDecomposedAI(model_name="Qwen/Qwen2.5-0.5B", max_n=MAX_N)
-    ai = ai.to(device=device, dtype=torch.float32)
+    ai = torch.compile(ai, mode="default")  # 컴파일로 성능 향상
+    ai = ai.to(device=device)
 
-    # 학습할 파라미터 (Attention + Decomposer + LengthPredictor)
     trainable_params = (
         list(ai.attention_target.parameters())
         + list(ai.decomposer.parameters())
         + list(ai.length_predictor.parameters())
     )
-    optimizer = torch.optim.AdamW(trainable_params, lr=1e-3)
+    optimizer = torch.optim.AdamW(trainable_params, lr=3e-3)
 
     loss_token_fn = nn.CrossEntropyLoss(ignore_index=-100)
     loss_length_fn = nn.CrossEntropyLoss()
 
-    # 학습 데이터셋 (프롬프트, 실제 타겟 문장)
+    # AMP(Automatic Mixed Precision) 스케일러 설정
+    scaler = torch.amp.GradScaler()
+
     training_data = [
         ("Artificial Intelligence is", " getting smarter every day."),
         ("Deep learning models can", " solve complex problems."),
@@ -174,58 +178,80 @@ if __name__ == "__main__":
         ("Natural language processing allows", " computers to understand text."),
     ]
 
-    print("\n=== 학습 시작 (Target Vector + Length Predictor 원샷 학습) ===")
+    # 사전 토큰화 및 데이터 준비
+    prompts = [item[0] for item in training_data]
+    targets = [item[1] for item in training_data]
+
+    ai.tokenizer.padding_side = "left"
+    if ai.tokenizer.pad_token is None:
+        ai.tokenizer.pad_token = ai.tokenizer.eos_token
+
+    batch_prompt_ids = ai.tokenizer(
+        prompts, return_tensors="pt", padding=True
+    ).input_ids.to(device)
+
+    batch_target_list = [ai.tokenizer.encode(t) for t in targets]
+    actual_lengths = [len(t) for t in batch_target_list]
+
+    padded_targets = torch.full(
+        (len(training_data), MAX_N), -100, dtype=torch.long, device=device
+    )
+    for i, t_ids in enumerate(batch_target_list):
+        length = min(len(t_ids), MAX_N)
+        padded_targets[i, :length] = torch.tensor(t_ids[:length], device=device)
+
+    length_targets = torch.tensor([l - 1 for l in actual_lengths], device=device)
+
+    print("\n=== 초고속 학습 시작 (FP16 Mixed Precision 적용) ===")
     ai.train()
-    # LR 상향 및 Epochs 300으로 변경
-    optimizer = torch.optim.AdamW(trainable_params, lr=3e-3)
     epochs = 300
 
+    optimizer.zero_grad(set_to_none=True)
+    with torch.amp.autocast("cuda"):
+        logits_w, length_logits_w, _ = ai(batch_prompt_ids)
+        loss_w = loss_token_fn(
+            logits_w.view(-1, ai.vocab_size), padded_targets.view(-1)
+        ) + 0.2 * loss_length_fn(length_logits_w, length_targets)
+
+    scaler.scale(loss_w).backward()  # <--- Backward 컴파일 유도
+    scaler.step(optimizer)  # <--- Optimizer 컴파일 유도
+    scaler.update()
+
+    start_time = time.time()
+
+    # GPU 동기화 및 이전 워밍업 가중치 초기화
+    torch.cuda.synchronize()
+    optimizer.zero_grad(set_to_none=True)
+    # ===============================================================
+    # [최적화 2] FP16 autocast 연산 루프
+    # ===============================================================
     for epoch in range(1, epochs + 1):
-        total_loss = 0.0
-        for prompt_text, target_text in training_data:
-            optimizer.zero_grad()
-            prompt_ids = ai.tokenizer.encode(prompt_text, return_tensors="pt").to(
-                device
-            )
+        optimizer.zero_grad(set_to_none=True)  # grad=None 설정으로 메모리/속도 이득
 
-            # Qwen Tokenizer의 정확한 Encode
-            target_ids_raw = ai.tokenizer.encode(target_text)
-            actual_length = len(target_ids_raw)
-
-            padded_target_ids = torch.full(
-                (1, MAX_N), -100, dtype=torch.long, device=device
-            )
-            padded_target_ids[0, :actual_length] = torch.tensor(
-                target_ids_raw, device=device
-            )
-
-            logits, length_logits, _ = ai(prompt_ids)
+        # Mixed Precision 연산으로 Tensor Core 활용
+        with torch.amp.autocast("cuda"):
+            logits, length_logits, _ = ai(batch_prompt_ids)
 
             token_loss = loss_token_fn(
-                logits.view(-1, ai.vocab_size), padded_target_ids.view(-1)
+                logits.view(-1, ai.vocab_size), padded_targets.view(-1)
             )
-            length_target = torch.tensor([actual_length - 1], device=device)
-            length_loss = loss_length_fn(length_logits, length_target)
-
+            length_loss = loss_length_fn(length_logits, length_targets)
             loss = token_loss + 0.2 * length_loss
-            loss.backward()
-            optimizer.step()
-            total_loss += loss.item()
 
-        if epoch % 20 == 0:
-            print(
-                f"Epoch {epoch:2d}/{epochs} | Loss: {total_loss / len(training_data):.4f}"
-            )
-        if epoch == 1:
-            print("started training...")
+        # FP16 역전파 스케일링
+        scaler.scale(loss).backward()
+        scaler.step(optimizer)
+        scaler.update()
 
-    # ===============================================================
-    # 6. 추론 테스트 (원샷 자동 길이 측정 및 생성)
-    # ===============================================================
+    torch.cuda.synchronize()
+    end_time = time.time()
+
+    print(f"소요 시간: {end_time - start_time:.4f}초")
+
+    # 추론 테스트
     print("\n=== 추론 테스트 ===")
     test_prompt = "Artificial Intelligence is"
     gen_text, pred_len = ai.generate(test_prompt, device=device)
-
     print(f"입력 프롬프트 : '{test_prompt}'")
     print(f"예측된 토큰 수 : {pred_len}개 토큰")
     print(f"원샷 생성 결과 : '{gen_text}'")
