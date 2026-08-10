@@ -140,7 +140,7 @@ class OneShotDecomposedAI(nn.Module):
 # 5. CSV 데이터 로드 및 학습
 # ===============================================================
 if __name__ == "__main__":
-    MAX_N = 64
+    MAX_N = 32
     device = "cuda" if torch.cuda.is_available() else "cpu"
 
     ai = OneShotDecomposedAI(model_name="Qwen/Qwen2.5-0.5B", max_n=MAX_N)
