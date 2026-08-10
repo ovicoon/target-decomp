@@ -259,7 +259,7 @@ if __name__ == "__main__":
     # 4. 학습 시작
     print("\n=== CSV 대화 데이터 기반 원샷 학습 시작 ===")
     ai.train()
-    epochs = 100
+    epochs = 1000
 
     # Warmup / Compile
     optimizer.zero_grad(set_to_none=True)
