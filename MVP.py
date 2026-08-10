@@ -140,7 +140,7 @@ class OneShotDecomposedAI(nn.Module):
 # 5. CSV 데이터 로드 및 학습
 # ===============================================================
 if __name__ == "__main__":
-    MAX_N = 16  # 대화 문장은 길 수 있으므로 MAX_N을 약간 확장
+    MAX_N = 64
     device = "cuda" if torch.cuda.is_available() else "cpu"
 
     ai = OneShotDecomposedAI(model_name="Qwen/Qwen2.5-0.5B", max_n=MAX_N)
@@ -151,7 +151,7 @@ if __name__ == "__main__":
     # ===============================================================
     # 데이터 제한 설정
     # ===============================================================
-    MAX_SAMPLES = 100  # <--- 원하는 최대 데이터(대화) 개수 지정 (예: 1000개만 사용)
+    MAX_SAMPLES = 100
 
     ai.tokenizer.padding_side = "left"
     if ai.tokenizer.pad_token is None:
@@ -241,7 +241,7 @@ if __name__ == "__main__":
     # 4. 학습 시작
     print("\n=== CSV 대화 데이터 기반 원샷 학습 시작 ===")
     ai.train()
-    epochs = 200
+    epochs = 2000
 
     # Warmup / Compile
     optimizer.zero_grad(set_to_none=True)
