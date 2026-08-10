@@ -41,7 +41,7 @@ class SingleStepAttention(nn.Module):
         if attn_mask is not None:
             # attn_mask: (B, Seq_Len) -> (B, 1, Seq_Len)
             mask = attn_mask.unsqueeze(1)
-            attn_scores = attn_scores.masked_fill(mask == 0, -1e9)
+            attn_scores = attn_scores.masked_fill(mask == 0, -1e4)
 
         attn_weights = F.softmax(attn_scores, dim=-1)
         target_x = torch.matmul(attn_weights, V).squeeze(1)
