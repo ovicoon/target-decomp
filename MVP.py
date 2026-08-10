@@ -283,7 +283,12 @@ if __name__ == "__main__":
 
     # 5. 추론 테스트
     print("\n=== 대화 테스트 ===")
-    test_prompt = input("User 입력 >>>: ")
-    gen_text, pred_len = ai.generate(test_prompt, device=device)
-    print(f"예측된 토큰 수 : {pred_len}개")
-    print(f"AI 원샷 답변 : '{gen_text}'")
+    while True:
+        test_prompt = input("User 입력 >>>: ")
+
+        if test_prompt == "exit":
+            break
+
+        gen_text, pred_len = ai.generate(test_prompt, device=device)
+        print(f"예측된 토큰 수 : {pred_len}개")
+        print(f"AI 원샷 답변 : '{gen_text}'")
