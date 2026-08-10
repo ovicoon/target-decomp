@@ -87,7 +87,7 @@ class OneShotDecomposedAI(nn.Module):
         print(f"[{model_name}] 백본 및 Pre-trained Vocab 로드 중...")
         self.tokenizer = AutoTokenizer.from_pretrained(model_name)
         base_llm = AutoModelForCausalLM.from_pretrained(
-            model_name, torch_dtype=torch.float32  # bfloat16 대신 float32 강제 지정
+            model_name, dtype=torch.float32  # bfloat16 대신 float32 강제 지정
         )
 
         self.vocab_size = base_llm.config.vocab_size
