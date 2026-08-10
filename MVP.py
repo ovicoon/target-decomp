@@ -53,17 +53,28 @@ class SingleStepAttention(nn.Module):
 class VectorDecomposer(nn.Module):
     def __init__(self, max_n: int, dim: int, alpha: float = 1.0):
         super().__init__()
+        self.max_n = max_n
+        self.dim = dim
+
+        # 2개의 서로 다른 W 가중치
         self.w1 = nn.Parameter(torch.empty(max_n, dim, dim))
         self.w2 = nn.Parameter(torch.empty(max_n, dim, dim))
+
         nn.init.xavier_uniform_(self.w1)
         nn.init.xavier_uniform_(self.w2)
-        self.act = nn.GELU()
+
+        self.act = nn.GELU()  # ✨ 표현력을 폭발시키는 마법의 조미료
 
     def forward(self, x: torch.Tensor) -> torch.Tensor:
-        v1 = torch.einsum("bd, ndk -> bnk", x, self.w1)
-        v1 = self.act(v1)  # 비선형 변환 추가!
-        v2 = torch.einsum("bnk, nkk -> bnk", v1, self.w2)
-        return v2
+        # 1차 W1 곱셈 (B, D) -> (B, N, D)
+        v = torch.einsum("bd, ndk -> bnk", x, self.w1)
+
+        # 비선형 변환 (선형 연산의 한계를 꺾어줌!)
+        v = self.act(v)
+
+        # 2차 W2 곱셈 (B, N, D) -> (B, N, D)
+        v = torch.einsum("bnk, nkk -> bnk", v, self.w2)
+        return v
 
 
 # ===============================================================
