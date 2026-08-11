@@ -194,7 +194,7 @@ if __name__ == "__main__":
     ai = torch.compile(ai, mode="default")
     ai = ai.to(device=device)
 
-    MAX_SAMPLES = 100
+    MAX_SAMPLES = 5
 
     ai.tokenizer.padding_side = "left"
     if ai.tokenizer.pad_token is None:
