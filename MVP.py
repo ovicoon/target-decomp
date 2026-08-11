@@ -13,13 +13,13 @@ torch.backends.cudnn.benchmark = True
 # 1. Target Vector 생성 모듈 (Attention 단 1회 사용)
 # ===============================================================
 class SingleStepAttention(nn.Module):
-
     def __init__(self, embed_dim: int, target_dim: int):
         super().__init__()
         self.q_proj = nn.Linear(embed_dim, target_dim)
         self.k_proj = nn.Linear(embed_dim, target_dim)
         self.v_proj = nn.Linear(embed_dim, target_dim)
         self.scale = target_dim**-0.5
+        self.norm = nn.LayerNorm(target_dim)  # LayerNorm 추가
 
     def forward(
         self,
@@ -36,14 +36,15 @@ class SingleStepAttention(nn.Module):
 
         attn_scores = torch.matmul(Q, K.transpose(-2, -1)) * self.scale
 
-        # 패딩(PAD) 토큰 영역 마스킹 처리하여 x가 뭉개지는 것 방지
         if attn_mask is not None:
-            # attn_mask: (B, Seq_Len) -> (B, 1, Seq_Len)
             mask = attn_mask.unsqueeze(1)
             attn_scores = attn_scores.masked_fill(mask == 0, -1e4)
 
         attn_weights = F.softmax(attn_scores, dim=-1)
         target_x = torch.matmul(attn_weights, V).squeeze(1)
+
+        # [핵심] Query 원본을 잔여 연결(Residual)해주고 Norm 적용
+        target_x = self.norm(target_x + query.squeeze(1))
         return target_x
 
 
