@@ -64,7 +64,7 @@ class DecomposerBlock(nn.Module):
 
 
 class VectorDecomposer(nn.Module):
-    def __init__(self, max_n: int, dim: int, alpha: float = 1.0, num_layers: int = 4):
+    def __init__(self, max_n: int, dim: int, alpha: float = 1.0, num_layers: int = 8):
         super().__init__()
         self.max_n = max_n
         self.dim = dim
