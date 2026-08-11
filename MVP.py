@@ -52,29 +52,33 @@ class SingleStepAttention(nn.Module):
 # 2. Vector Decomposer (Attention 미사용 수식 분해)
 # ===============================================================
 class VectorDecomposer(nn.Module):
-    def __init__(self, max_n: int, dim: int, alpha: float = 1.0):
+    def __init__(self, max_n: int, dim: int, num_layers: int = 4):
         super().__init__()
         self.max_n = max_n
         self.dim = dim
+        self.pos_emb = nn.Parameter(torch.randn(1, max_n, dim) * 0.02)
 
-        # 2개의 서로 다른 W 가중치
-        self.w1 = nn.Parameter(torch.empty(max_n, dim, dim))
-        self.w2 = nn.Parameter(torch.empty(max_n, dim, dim))
-
-        nn.init.xavier_uniform_(self.w1)
-        nn.init.xavier_uniform_(self.w2)
-
-        self.act = nn.GELU()  # ✨ 표현력을 폭발시키는 마법의 조미료
+        # W 가중치를 여러 층(Layer)으로 확장
+        self.layers = nn.ModuleList(
+            [
+                nn.Sequential(
+                    nn.Linear(dim, dim * 2),
+                    nn.GELU(),
+                    nn.Linear(dim * 2, dim),
+                    nn.LayerNorm(dim),
+                )
+                for _ in range(num_layers)
+            ]
+        )
 
     def forward(self, x: torch.Tensor) -> torch.Tensor:
-        # 1차 W1 곱셈 (B, D) -> (B, N, D)
-        v = torch.einsum("bd, ndk -> bnk", x, self.w1)
+        # (B, D) -> (B, N, D) 확장 및 위치 임베딩
+        v = x.unsqueeze(1).repeat(1, self.max_n, 1) + self.pos_emb
 
-        # 비선형 변환 (선형 연산의 한계를 꺾어줌!)
-        v = self.act(v)
+        # 여러 층의 W 연산을 통과 (Deep Representation)
+        for layer in self.layers:
+            v = v + layer(v)  # Residual Connection 적용
 
-        # 2차 W2 곱셈 (B, N, D) -> (B, N, D)
-        v = torch.einsum("bnk, nkk -> bnk", v, self.w2)
         return v
 
 
