@@ -191,7 +191,7 @@ if __name__ == "__main__":
     device = "cuda" if torch.cuda.is_available() else "cpu"
 
     ai = OneShotDecomposedAI(model_name="Qwen/Qwen2.5-0.5B", max_n=MAX_N)
-    # ai = torch.compile(ai, mode="default")
+    ai = torch.compile(ai, mode="default")
     ai = ai.to(device=device)
 
     MAX_SAMPLES = 5
