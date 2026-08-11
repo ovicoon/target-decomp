@@ -52,13 +52,17 @@ class SingleStepAttention(nn.Module):
 # 2. Vector Decomposer (Attention 미사용 수식 분해)
 # ===============================================================
 class VectorDecomposer(nn.Module):
-    def __init__(self, max_n: int, dim: int, num_layers: int = 4):
+
+    # alpha: float = 1.0 매개변수가 있는지 확인하고 추가해 주세요!
+    def __init__(self, max_n: int, dim: int, alpha: float = 1.0, num_layers: int = 4):
         super().__init__()
         self.max_n = max_n
         self.dim = dim
+        self.alpha = alpha  # 필요한 경우 저장
+
         self.pos_emb = nn.Parameter(torch.randn(1, max_n, dim) * 0.02)
 
-        # W 가중치를 여러 층(Layer)으로 확장
+        # 깊은 가중치(W) 레이어들
         self.layers = nn.ModuleList(
             [
                 nn.Sequential(
@@ -72,13 +76,9 @@ class VectorDecomposer(nn.Module):
         )
 
     def forward(self, x: torch.Tensor) -> torch.Tensor:
-        # (B, D) -> (B, N, D) 확장 및 위치 임베딩
         v = x.unsqueeze(1).repeat(1, self.max_n, 1) + self.pos_emb
-
-        # 여러 층의 W 연산을 통과 (Deep Representation)
         for layer in self.layers:
-            v = v + layer(v)  # Residual Connection 적용
-
+            v = v + layer(v)
         return v
 
 
