@@ -48,37 +48,44 @@ class SingleStepAttention(nn.Module):
         return target_x
 
 
-# ===============================================================
-# 2. Vector Decomposer (Attention 미사용 수식 분해)
-# ===============================================================
-class VectorDecomposer(nn.Module):
+class DecomposerBlock(nn.Module):
+    def __init__(self, dim: int, expansion_factor: int = 2):
+        super().__init__()
+        self.net = nn.Sequential(
+            nn.Linear(dim, dim * expansion_factor),
+            nn.GELU(),
+            nn.Linear(dim * expansion_factor, dim),
+            nn.LayerNorm(dim),
+        )
 
-    # alpha: float = 1.0 매개변수가 있는지 확인하고 추가해 주세요!
+    def forward(self, x: torch.Tensor) -> torch.Tensor:
+        # Residual Connection
+        return x + self.net(x)
+
+
+class VectorDecomposer(nn.Module):
     def __init__(self, max_n: int, dim: int, alpha: float = 1.0, num_layers: int = 4):
         super().__init__()
         self.max_n = max_n
         self.dim = dim
-        self.alpha = alpha  # 필요한 경우 저장
+        self.alpha = alpha
 
+        # 위치(Position) 정보를 더 명확하게 주입
         self.pos_emb = nn.Parameter(torch.randn(1, max_n, dim) * 0.02)
 
-        # 깊은 가중치(W) 레이어들
-        self.layers = nn.ModuleList(
-            [
-                nn.Sequential(
-                    nn.Linear(dim, dim * 2),
-                    nn.GELU(),
-                    nn.Linear(dim * 2, dim),
-                    nn.LayerNorm(dim),
-                )
-                for _ in range(num_layers)
-            ]
+        # 깊은 Residual 블록 쌓기 (num_layers = 4~6 권장)
+        self.blocks = nn.ModuleList(
+            [DecomposerBlock(dim=dim) for _ in range(num_layers)]
         )
 
     def forward(self, x: torch.Tensor) -> torch.Tensor:
+        # (B, D) -> (B, N, D) 확장 후 Positional Embedding 주입
         v = x.unsqueeze(1).repeat(1, self.max_n, 1) + self.pos_emb
-        for layer in self.layers:
-            v = v + layer(v)
+
+        # 깊은 Layer 통과
+        for block in self.blocks:
+            v = block(v)
+
         return v
 
 
