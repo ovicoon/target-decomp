@@ -64,27 +64,52 @@ class DecomposerBlock(nn.Module):
 
 
 class VectorDecomposer(nn.Module):
-    def __init__(
-        self, max_n: int, dim: int, alpha: float = 1.0, num_layers: int = 4
-    ):  # 레이어 수 8 -> 4로 줄임
+    def __init__(self, max_n: int, dim: int, alpha: float = 1.0, num_layers: int = 4):
         super().__init__()
-        self.max_n = max_n
-        self.dim = dim
+        self.max_n = max_n  # N
+        self.dim = dim  # D
+        self.alpha = alpha  # \alpha
 
-        # [수정] 위치 임베딩의 스케일을 키워 위치별 차별성을 명확히 함 (0.02 -> 0.1)
-        self.pos_emb = nn.Parameter(torch.randn(1, max_n, dim) * 0.1)
+        # \mathbf w_i 역할: 학습 가능한 위치별 벡터 (N, D)
+        self.w = nn.Parameter(torch.randn(max_n, dim) * 0.02)
 
         self.blocks = nn.ModuleList(
             [DecomposerBlock(dim=dim) for _ in range(num_layers)]
         )
+        self.out_proj = nn.Sequential(nn.LayerNorm(dim), nn.Linear(dim, dim))
 
     def forward(self, x: torch.Tensor) -> torch.Tensor:
-        # (B, D) -> (B, N, D)
-        v = x.unsqueeze(1).repeat(1, self.max_n, 1) + self.pos_emb
+        # x shape: (B, D)
+        B, D = x.shape
+        N = self.max_n
 
+        # 1. \bar{\mathbf w} 계산: \frac{1}{N} \sum w_j -> shape: (1, D)
+        w_bar = self.w.mean(dim=0, keepdim=True)
+
+        # 2. \mathbf w_i - \bar{\mathbf w} (Zero-mean 설정) -> shape: (N, D)
+        w_diff = self.w - w_bar
+
+        # 3. 분모의 L2 Norm 평균 계산: \sqrt{ \frac{1}{N} \sum ||w_j - \bar{w}||^2 }
+        # w_diff.pow(2).sum(dim=-1) 은 각 위치별 ||w_i - \bar{w}||^2
+        norm_std = torch.sqrt(w_diff.pow(2).sum(dim=-1).mean() + 1e-8)
+
+        # 4. \mathbf v_i 계산 수식 집행
+        # (1/N)*x  -> (B, 1, D)
+        x_base = (x / N).unsqueeze(1)
+
+        # \alpha * (w_i - w_bar) / norm_std -> (1, N, D)
+        fluctuation = self.alpha * (w_diff / norm_std).unsqueeze(0)
+
+        # \mathbf v_i = (1/N)\mathbf x + \alpha * ( ... )
+        v = x_base + fluctuation  # Broadcast 되어서 (B, N, D) 형태가 됨
+
+        # --- 수식적으로 \sum_{i=1}^N v_i == x 가 보장됨! ---
+
+        # 5. Decomposer 깊은 블록 통과
         for block in self.blocks:
             v = block(v)
-        return v
+
+        return self.out_proj(v)
 
 
 # ===============================================================
