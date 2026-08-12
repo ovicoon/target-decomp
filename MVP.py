@@ -138,7 +138,6 @@ class OneShotDecomposedAI(nn.Module):
         self,
         model_name: str = "Qwen/Qwen2.5-0.5B",
         max_n: int = 16,
-        alpha: float = 1.0,
     ):
         super().__init__()
         self.max_n = max_n
@@ -161,7 +160,7 @@ class OneShotDecomposedAI(nn.Module):
             param.requires_grad = True
 
         self.attention_target = SingleStepAttention(self.embed_dim, self.embed_dim)
-        self.decomposer = VectorDecomposer(max_n=max_n, dim=self.embed_dim, alpha=alpha)
+        self.decomposer = VectorDecomposer(max_n=max_n, dim=self.embed_dim)
         self.length_predictor = LengthPredictor(embed_dim=self.embed_dim, max_n=max_n)
 
     def forward(self, prompt_ids: torch.Tensor, attention_mask: torch.Tensor = None):
@@ -302,6 +301,7 @@ if __name__ == "__main__":
         list(ai.attention_target.parameters())
         + list(ai.decomposer.parameters())
         + list(ai.length_predictor.parameters())
+        + list(ai.lm_head.parameters())  # <--- 이 부분이 핵심입니다!
     )
     optimizer = torch.optim.AdamW(trainable_params, lr=1e-3)
 
