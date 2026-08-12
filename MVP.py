@@ -49,36 +49,22 @@ class SingleStepAttention(nn.Module):
 
 
 class DecomposerBlock(nn.Module):
-
     def __init__(self, dim: int, expansion_factor: int = 2):
         super().__init__()
-        # 1. 토큰 간 맥락 교류를 위한 Self-Attention 추가
-        self.self_attn = nn.MultiheadAttention(
-            embed_dim=dim, num_heads=4, batch_first=True
-        )
-        self.norm1 = nn.LayerNorm(dim)
-
-        # 2. 기존 FFN
-        self.ffn = nn.Sequential(
+        self.net = nn.Sequential(
             nn.Linear(dim, dim * expansion_factor),
             nn.GELU(),
             nn.Linear(dim * expansion_factor, dim),
+            nn.LayerNorm(dim),
         )
-        self.norm2 = nn.LayerNorm(dim)
 
     def forward(self, x: torch.Tensor) -> torch.Tensor:
-        # Self-Attention 연산 (N개의 토큰 벡터끼리 정보 교환)
-        attn_out, _ = self.self_attn(x, x, x)
-        x = self.norm1(x + attn_out)
-
-        # FFN 연산
-        ffn_out = self.ffn(x)
-        x = self.norm2(x + ffn_out)
-        return x
+        # Residual Connection
+        return x + self.net(x)
 
 
 class VectorDecomposer(nn.Module):
-    def __init__(self, max_n: int, dim: int, alpha: float = 10.0, num_layers: int = 16):
+    def __init__(self, max_n: int, dim: int, alpha: float = 2.0, num_layers: int = 4):
         super().__init__()
         self.max_n = max_n  # N
         self.dim = dim  # D
