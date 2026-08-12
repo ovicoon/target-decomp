@@ -315,7 +315,6 @@ if __name__ == "__main__":
     epochs = 500
 
     # Warmup / Compile
-    optimizer.zero_grad(set_to_none=True)
     with torch.amp.autocast("cuda"):
         logits, length_logits, target_x = ai(
             batch_prompt_ids, attention_mask=batch_attention_mask
