@@ -316,28 +316,22 @@ if __name__ == "__main__":
 
     # Warmup / Compile
     with torch.amp.autocast("cuda"):
-        logits, length_logits, target_x = ai(
+        logits, length_logits, _ = ai(
             batch_prompt_ids, attention_mask=batch_attention_mask
         )
 
-        # 1. Token Loss 계산 및 단독 역전파
         token_loss = loss_token_fn(
             logits.view(-1, ai.vocab_size), padded_targets.view(-1)
         )
-
-        # 2. Length Loss 계산
         length_loss = loss_length_fn(length_logits, length_targets)
 
-    # optimizer zero_grad는 루프 시작 시 1번만!
+        total_loss = token_loss + 1.0 * length_loss
+
     optimizer.zero_grad(set_to_none=True)
 
-    # Token Loss 역전파 (Decomposer, Attention 모듈 학습)
-    scaler.scale(token_loss).backward(retain_graph=True)
+    # 단 1번만 backward 실행! (retain_graph 불필요)
+    scaler.scale(total_loss).backward()
 
-    # Length Loss 역전파 (Length Predictor 및 Attention 모듈 학습)
-    scaler.scale(length_loss).backward()
-
-    # 가중치 업데이트
     scaler.step(optimizer)
     scaler.update()
 
