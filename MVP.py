@@ -350,7 +350,7 @@ if __name__ == "__main__":
                 logits.view(-1, ai.vocab_size), padded_targets.view(-1)
             )
             length_loss = loss_length_fn(length_logits, length_targets)
-            loss = token_loss + 0.2 * length_loss
+            loss = token_loss + 1.0 * length_loss
 
         scaler.scale(loss).backward()
         scaler.step(optimizer)
