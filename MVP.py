@@ -43,8 +43,8 @@ class SingleStepAttention(nn.Module):
         attn_weights = F.softmax(attn_scores, dim=-1)
         target_x = torch.matmul(attn_weights, V).squeeze(1)
 
-        # [핵심] Query 원본을 잔여 연결(Residual)해주고 Norm 적용
-        target_x = self.norm(target_x + query.squeeze(1))
+        # 단순 target_x에 LayerNorm만 적용하거나 alpha 비율 조절
+        target_x = self.norm(target_x + 0.3 * query.squeeze(1))
         return target_x
 
 
