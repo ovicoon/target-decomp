@@ -116,23 +116,24 @@ class VectorDecomposer(nn.Module):
 # ===============================================================
 # 3. 토큰 개수 예측 모듈
 # ===============================================================
-class LengthPredictor(nn.Module):
-    def __init__(self, embed_dim: int, max_n: int):
+# 1. LengthPredictor의 마지막 레이어를 1차원 scalar로 변경
+class RegressionLengthPredictor(nn.Module):
+    def __init__(self, embed_dim: int):
         super().__init__()
-        # 은닉층 용량을 키우고, 안정성을 위한 LayerNorm 추가
         self.net = nn.Sequential(
             nn.Linear(embed_dim, 256),
             nn.LayerNorm(256),
-            nn.GELU(),  # ReLU보다 회복력이 좋은 GELU 사용
+            nn.GELU(),
             nn.Dropout(0.1),
             nn.Linear(256, 128),
             nn.LayerNorm(128),
             nn.GELU(),
-            nn.Linear(128, max_n),
+            nn.Linear(128, 1),  # 단 하나의 연속적인 숫자(길이) 출력!
         )
 
     def forward(self, x: torch.Tensor) -> torch.Tensor:
-        return self.net(x)
+        # (B, 1) -> (B,)
+        return self.net(x).squeeze(-1)
 
 
 # ===============================================================
@@ -235,6 +236,9 @@ class OneShotDecomposedAI(nn.Module):
 # ===============================================================
 # 5. CSV 데이터 로드 및 학습
 # ===============================================================
+# ===============================================================
+# 5. CSV 데이터 로드 및 Regression 기반 학습
+# ===============================================================
 if __name__ == "__main__":
     TARGET_LOSS = 1.5  # 🎯 목표 Loss (1.0~1.5 사이 권장)
     PATIENCE = 3  # TARGET_LOSS 이하로 내려간 뒤 몇 Epoch 동안 유지되면 종료할지
@@ -245,6 +249,12 @@ if __name__ == "__main__":
     device = "cuda" if torch.cuda.is_available() else "cpu"
 
     ai = OneShotDecomposedAI(model_name="Qwen/Qwen2.5-0.5B", max_n=MAX_N)
+
+    # ---------------------------------------------------------------
+    # [핵심 변경 1] LengthPredictor의 마지막 레이어를 1차원(Regression)으로 교체
+    # ---------------------------------------------------------------
+    ai.length_predictor.net[-1] = nn.Linear(128, 1)
+
     ai = torch.compile(ai, mode="default")
     ai = ai.to(device=device)
 
@@ -293,7 +303,7 @@ if __name__ == "__main__":
     if len(formatted_prompts) == 0:
         raise ValueError("데이터가 0개 수집되었습니다!")
 
-    # 2. 토크나이징 및 Tensor 구축
+    # 데이터 토크나이징 및 Tensor 구축
     tokenized_batch = ai.tokenizer(formatted_prompts, return_tensors="pt", padding=True)
     batch_prompt_ids = tokenized_batch.input_ids.to(device)
     batch_attention_mask = tokenized_batch.attention_mask.to(device)
@@ -308,15 +318,20 @@ if __name__ == "__main__":
         length = actual_lengths[i]
         padded_targets[i, :length] = torch.tensor(t_ids[:length], device=device)
 
-    length_targets = torch.tensor([l - 1 for l in actual_lengths], device=device)
+    # ---------------------------------------------------------------
+    # [핵심 변경 2] Regression을 위해 target length를 Float Tensor로 생성
+    # ---------------------------------------------------------------
+    length_targets_float = torch.tensor(
+        actual_lengths, dtype=torch.float32, device=device
+    )
 
-    # 1. TensorDataset 및 DataLoader 생성
+    # TensorDataset 및 DataLoader 생성
     dataset = TensorDataset(
-        batch_prompt_ids, batch_attention_mask, padded_targets, length_targets
+        batch_prompt_ids, batch_attention_mask, padded_targets, length_targets_float
     )
     train_loader = DataLoader(dataset, batch_size=16, shuffle=True)
 
-    # 2. Optimizer 설정 (동일)
+    # Optimizer 및 Loss 함수 설정
     trainable_params = (
         list(ai.attention_target.parameters())
         + list(ai.decomposer.parameters())
@@ -324,12 +339,16 @@ if __name__ == "__main__":
         + list(ai.lm_head.parameters())
     )
     optimizer = torch.optim.AdamW(trainable_params, lr=1e-3)
+
     loss_token_fn = nn.CrossEntropyLoss(ignore_index=-100)
-    loss_length_fn = nn.CrossEntropyLoss()
+    # ---------------------------------------------------------------
+    # [핵심 변경 3] SmoothL1Loss (Regression) 로 변경
+    # ---------------------------------------------------------------
+    loss_length_fn = nn.SmoothL1Loss()
     scaler = torch.amp.GradScaler("cuda")
 
-    # 3. Epoch 학습 루프 수정
-    print("\n=== 미니배치 기반 원샷 학습 시작 ===")
+    # Epoch 학습 루프
+    print("\n=== 미니배치 기반 원샷 학습 시작 (Regression Length Predictor) ===")
     ai.train()
     epochs = 100
 
@@ -338,7 +357,7 @@ if __name__ == "__main__":
     for epoch in range(1, epochs + 1):
         epoch_loss = 0.0
 
-        for b_prompt, b_mask, b_target, b_len_target in train_loader:
+        for b_prompt, b_mask, b_target, b_len_target_float in train_loader:
             optimizer.zero_grad(set_to_none=True)
 
             with torch.amp.autocast("cuda"):
@@ -347,8 +366,15 @@ if __name__ == "__main__":
                 token_loss = loss_token_fn(
                     logits.view(-1, ai.vocab_size), b_target.view(-1)
                 )
-                length_loss = loss_length_fn(length_logits, b_len_target)
-                loss = token_loss + 1.0 * length_loss
+
+                # ---------------------------------------------------------------
+                # [핵심 변경 4] pred_len_float 추출 및 SmoothL1Loss 계산
+                # ---------------------------------------------------------------
+                pred_len_float = length_logits.squeeze(-1)  # (B, 1) -> (B,)
+                length_loss = loss_length_fn(pred_len_float, b_len_target_float)
+
+                # Length Loss 비중을 조절 (0.1 ~ 1.0)
+                loss = token_loss + 0.5 * length_loss
 
             scaler.scale(loss).backward()
             scaler.step(optimizer)
@@ -379,14 +405,52 @@ if __name__ == "__main__":
     end_time = time.time()
     print(f"학습 소요 시간: {end_time - start_time:.4f}초")
 
-    # 5. 추론 테스트
-    print("\n=== 대화 테스트 ===")
+    # ---------------------------------------------------------------
+    # [핵심 변경 5] 추론(generate) 메커니즘을 Round + Clamp로 보완
+    # ---------------------------------------------------------------
+    def generate_with_regression(model, prompt_text: str, device: str = "cpu"):
+        model.eval()
+        with torch.no_grad():
+            messages = [{"role": "user", "content": prompt_text.strip()}]
+            formatted_prompt = model.tokenizer.apply_chat_template(
+                messages, tokenize=False, add_generation_prompt=True
+            )
+
+            prompt_inputs = model.tokenizer(formatted_prompt, return_tensors="pt").to(
+                device
+            )
+            prompt_ids = prompt_inputs.input_ids
+            attn_mask = prompt_inputs.attention_mask
+
+            logits, length_logits, target_x = model.forward(
+                prompt_ids, attention_mask=attn_mask
+            )
+
+            sample_val = target_x[0, :3].detach().cpu().numpy()
+            print(
+                f"[DEBUG x 벡터 샘플]: {sample_val[0]:.4f}, {sample_val[1]:.4f}, {sample_val[2]:.4f}"
+            )
+
+            # 연속형 float 출력을 반올림(round) 후 1~MAX_N 범위로 클램핑
+            raw_len = length_logits.squeeze().item()
+            predicted_len = int(round(raw_len))
+            predicted_len = max(1, min(predicted_len, MAX_N))
+
+            pred_ids = torch.argmax(logits[0, :predicted_len, :], dim=-1)
+            generated_text = model.tokenizer.decode(pred_ids, skip_special_tokens=True)
+
+            return generated_text, predicted_len, raw_len
+
+    # 추론 테스트
+    print("\n=== 대화 테스트 (Regression Predictor) ===")
     while True:
         test_prompt = input("User 입력 >>>: ")
 
         if test_prompt == "exit":
             break
 
-        gen_text, pred_len = ai.generate(test_prompt, device=device)
-        print(f"예측된 토큰 수 : {pred_len}개")
+        gen_text, pred_len, raw_len = generate_with_regression(
+            ai, test_prompt, device=device
+        )
+        print(f"예측된 토큰 수 : {pred_len}개 (Raw float: {raw_len:.2f})")
         print(f"AI 원샷 답변 : '{gen_text}'\n")
