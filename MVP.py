@@ -117,17 +117,22 @@ class VectorDecomposer(nn.Module):
 # 3. 토큰 개수 예측 모듈
 # ===============================================================
 class LengthPredictor(nn.Module):
-
     def __init__(self, embed_dim: int, max_n: int):
         super().__init__()
-        self.fc = nn.Sequential(
-            nn.Linear(embed_dim, 64),
-            nn.ReLU(),
-            nn.Linear(64, max_n),
+        # 은닉층 용량을 키우고, 안정성을 위한 LayerNorm 추가
+        self.net = nn.Sequential(
+            nn.Linear(embed_dim, 256),
+            nn.LayerNorm(256),
+            nn.GELU(),  # ReLU보다 회복력이 좋은 GELU 사용
+            nn.Dropout(0.1),
+            nn.Linear(256, 128),
+            nn.LayerNorm(128),
+            nn.GELU(),
+            nn.Linear(128, max_n),
         )
 
     def forward(self, x: torch.Tensor) -> torch.Tensor:
-        return self.fc(x)
+        return self.net(x)
 
 
 # ===============================================================
