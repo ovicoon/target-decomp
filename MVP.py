@@ -235,7 +235,7 @@ if __name__ == "__main__":
     ai = torch.compile(ai, mode="default")
     ai = ai.to(device=device)
 
-    MAX_SAMPLES = 100
+    MAX_SAMPLES = 200
 
     ai.tokenizer.padding_side = "left"
     if ai.tokenizer.pad_token is None:
@@ -318,7 +318,7 @@ if __name__ == "__main__":
     # 3. Epoch 학습 루프 수정
     print("\n=== 미니배치 기반 원샷 학습 시작 ===")
     ai.train()
-    epochs = 200
+    epochs = 250
 
     start_time = time.time()
 
