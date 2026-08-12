@@ -64,28 +64,26 @@ class DecomposerBlock(nn.Module):
 
 
 class VectorDecomposer(nn.Module):
-    def __init__(self, max_n: int, dim: int, alpha: float = 1.0, num_layers: int = 8):
+    def __init__(
+        self, max_n: int, dim: int, alpha: float = 1.0, num_layers: int = 4
+    ):  # 레이어 수 8 -> 4로 줄임
         super().__init__()
         self.max_n = max_n
         self.dim = dim
-        self.alpha = alpha
 
-        # 위치(Position) 정보를 더 명확하게 주입
-        self.pos_emb = nn.Parameter(torch.randn(1, max_n, dim) * 0.02)
+        # [수정] 위치 임베딩의 스케일을 키워 위치별 차별성을 명확히 함 (0.02 -> 0.1)
+        self.pos_emb = nn.Parameter(torch.randn(1, max_n, dim) * 0.1)
 
-        # 깊은 Residual 블록 쌓기 (num_layers = 4~6 권장)
         self.blocks = nn.ModuleList(
             [DecomposerBlock(dim=dim) for _ in range(num_layers)]
         )
 
     def forward(self, x: torch.Tensor) -> torch.Tensor:
-        # (B, D) -> (B, N, D) 확장 후 Positional Embedding 주입
+        # (B, D) -> (B, N, D)
         v = x.unsqueeze(1).repeat(1, self.max_n, 1) + self.pos_emb
 
-        # 깊은 Layer 통과
         for block in self.blocks:
             v = block(v)
-
         return v
 
 
