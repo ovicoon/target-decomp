@@ -228,7 +228,12 @@ class OneShotDecomposedAI(nn.Module):
 # 5. CSV 데이터 로드 및 학습
 # ===============================================================
 if __name__ == "__main__":
+    TARGET_LOSS = 1.2  # 🎯 목표 Loss (1.0~1.5 사이 권장)
+    PATIENCE = 10  # TARGET_LOSS 이하로 내려간 뒤 몇 Epoch 동안 유지되면 종료할지
+    patience_counter = 0
+    best_loss = float("inf")
     MAX_N = 32
+
     device = "cuda" if torch.cuda.is_available() else "cpu"
 
     ai = OneShotDecomposedAI(model_name="Qwen/Qwen2.5-0.5B", max_n=MAX_N)
@@ -343,9 +348,23 @@ if __name__ == "__main__":
 
             epoch_loss += loss.item()
 
-        if epoch % 50 == 0:
+        if epoch % 10 == 0:
             avg_loss = epoch_loss / len(train_loader)
             print(f"Epoch {epoch}/{epochs} - Avg Loss: {avg_loss:.4f}")
+
+        if avg_loss <= TARGET_LOSS:
+            patience_counter += 1
+            if patience_counter >= PATIENCE:
+                print(
+                    f"\n🎯 목표 Loss ({TARGET_LOSS}) 이하로 {PATIENCE}회 지속되었습니다."
+                )
+                print(
+                    f"과적합 방지를 위해 Epoch {epoch}에서 학습을 조기 종료(Early Stopping)합니다!"
+                )
+                print(f"최종 Loss: {avg_loss:.4f}")
+                break
+        else:
+            patience_counter = 0  # 목표치를 다시 상회하면 카운터 리셋
 
     torch.cuda.synchronize()
     end_time = time.time()
