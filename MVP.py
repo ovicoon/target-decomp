@@ -223,7 +223,8 @@ class OneShotDecomposedAI(nn.Module):
             )
 
             # 소프트맥스로 가장 확률 높은 길이 선택
-            predicted_len = torch.argmax(length_logits, dim=-1).item() + 1
+            # predicted_len = torch.argmax(length_logits, dim=-1).item() + 1
+            predicted_len = 12
 
             # 예측된 토큰 출력
             pred_ids = torch.argmax(logits[0, :predicted_len, :], dim=-1)
