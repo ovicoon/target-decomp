@@ -205,7 +205,7 @@ class OneShotDecomposedAI(nn.Module):
 # 5. CSV 데이터 로드 및 Regression 기반 학습
 # ===============================================================
 if __name__ == "__main__":
-    TARGET_LOSS = 1.5
+    TARGET_LOSS = 0
     PATIENCE = 3
     patience_counter = 0
     best_loss = float("inf")
@@ -218,7 +218,7 @@ if __name__ == "__main__":
     ai = torch.compile(ai, mode="default")
     ai = ai.to(device=device)
 
-    MAX_SAMPLES = 2000
+    MAX_SAMPLES = 10
 
     ai.tokenizer.padding_side = "left"
     if ai.tokenizer.pad_token is None:
@@ -300,7 +300,7 @@ if __name__ == "__main__":
 
     print("\n=== 미니배치 기반 원샷 학습 시작 (Regression Length Predictor) ===")
     ai.train()
-    epochs = 100
+    epochs = 500
 
     start_time = time.time()
 
