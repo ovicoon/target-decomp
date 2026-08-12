@@ -167,17 +167,23 @@ class OneShotDecomposedAI(nn.Module):
     def forward(self, prompt_ids: torch.Tensor, attention_mask: torch.Tensor = None):
         embeddings = self.embedding(prompt_ids)
 
-        # [수정 핵심] PAD가 아닌 프롬프트의 '진짜 마지막 토큰'을 Query로 사용
         if attention_mask is not None:
-            last_token_idx = attention_mask.sum(dim=-1) - 1
-            batch_size = prompt_ids.size(0)
-            query = embeddings[
-                torch.arange(batch_size, device=prompt_ids.device),
-                last_token_idx,
-            ].unsqueeze(1)
-        else:
-            query = embeddings[:, -1:, :]
+            # (B, L, 1) 형태로 확장하여 PAD 토큰을 계산에서 제외
+            mask_expanded = attention_mask.unsqueeze(-1).expand_as(embeddings)
 
+            # 실제 토큰 위치의 임베딩만 다 더함 (B, D)
+            sum_embeddings = torch.sum(embeddings * mask_expanded, dim=1)
+
+            # 실제 토큰의 개수로 나눔 (0으로 나누기 방지 clamp)
+            sum_mask = mask_expanded.sum(dim=1).clamp(min=1e-9)
+
+            # 평균 계산 후 (B, 1, D) 형태로 차원 변경
+            query = (sum_embeddings / sum_mask).unsqueeze(1)
+        else:
+            # 마스크가 없는 경우 전체 시퀀스 평균
+            query = embeddings.mean(dim=1, keepdim=True)
+
+        # 이제 맥락 전체가 압축된 Query로 Attention 수행
         target_x = self.attention_target(
             query=query, key_value=embeddings, attn_mask=attention_mask
         )
