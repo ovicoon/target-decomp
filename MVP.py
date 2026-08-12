@@ -234,7 +234,7 @@ if __name__ == "__main__":
     ai = torch.compile(ai, mode="default")
     ai = ai.to(device=device)
 
-    MAX_SAMPLES = 200
+    MAX_SAMPLES = 100
 
     ai.tokenizer.padding_side = "left"
     if ai.tokenizer.pad_token is None:
@@ -312,7 +312,7 @@ if __name__ == "__main__":
     # 4. 학습 시작
     print("\n=== CSV 대화 데이터 기반 원샷 학습 시작 ===")
     ai.train()
-    epochs = 250
+    epochs = 200
 
     # Warmup / Compile
     with torch.amp.autocast("cuda"):
