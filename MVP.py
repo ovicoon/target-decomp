@@ -348,8 +348,9 @@ if __name__ == "__main__":
 
             epoch_loss += loss.item()
 
+        avg_loss = epoch_loss / len(train_loader)
+
         if epoch % 10 == 0:
-            avg_loss = epoch_loss / len(train_loader)
             print(f"Epoch {epoch}/{epochs} - Avg Loss: {avg_loss:.4f}")
 
         if avg_loss <= TARGET_LOSS:
