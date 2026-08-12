@@ -201,7 +201,8 @@ class OneShotDecomposedAI(nn.Module):
     def generate(self, prompt_text: str, device: str = "cpu"):
         self.eval()
         with torch.no_grad():
-            messages = [{"role": "user", "content": prompt_text}]
+            # 단일 질문에 대해 깔끔하게 system/user 템플릿 적용
+            messages = [{"role": "user", "content": prompt_text.strip()}]
             formatted_prompt = self.tokenizer.apply_chat_template(
                 messages, tokenize=False, add_generation_prompt=True
             )
@@ -216,15 +217,16 @@ class OneShotDecomposedAI(nn.Module):
                 prompt_ids, attention_mask=attn_mask
             )
 
-            # [디버깅 용] target_x 벡터가 달라지는지 눈으로 직접 확인!
             sample_val = target_x[0, :3].detach().cpu().numpy()
             print(
                 f"[DEBUG x 벡터 샘플]: {sample_val[0]:.4f}, {sample_val[1]:.4f}, {sample_val[2]:.4f}"
             )
 
+            # 소프트맥스로 가장 확률 높은 길이 선택
             predicted_len = torch.argmax(length_logits, dim=-1).item() + 1
-            pred_ids = torch.argmax(logits[0, :predicted_len, :], dim=-1)
 
+            # 예측된 토큰 출력
+            pred_ids = torch.argmax(logits[0, :predicted_len, :], dim=-1)
             generated_text = self.tokenizer.decode(pred_ids, skip_special_tokens=True)
             return generated_text, predicted_len
 
