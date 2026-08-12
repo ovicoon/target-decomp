@@ -296,68 +296,55 @@ if __name__ == "__main__":
 
     length_targets = torch.tensor([l - 1 for l in actual_lengths], device=device)
 
-    # 3. 학습 설정
+    # 1. TensorDataset 및 DataLoader 생성
+    dataset = TensorDataset(
+        batch_prompt_ids, batch_attention_mask, padded_targets, length_targets
+    )
+    train_loader = DataLoader(dataset, batch_size=8, shuffle=True)  # 배치 크기 8 설정!
+
+    # 2. Optimizer 설정 (동일)
     trainable_params = (
         list(ai.attention_target.parameters())
         + list(ai.decomposer.parameters())
         + list(ai.length_predictor.parameters())
-        + list(ai.lm_head.parameters())  # <--- 이 부분이 핵심입니다!
+        + list(ai.lm_head.parameters())
     )
     optimizer = torch.optim.AdamW(trainable_params, lr=1e-3)
-
     loss_token_fn = nn.CrossEntropyLoss(ignore_index=-100)
     loss_length_fn = nn.CrossEntropyLoss()
-    scaler = torch.amp.GradScaler()
+    scaler = torch.amp.GradScaler("cuda")
 
-    # 4. 학습 시작
-    print("\n=== CSV 대화 데이터 기반 원샷 학습 시작 ===")
+    # 3. Epoch 학습 루프 수정
+    print("\n=== 미니배치 기반 원샷 학습 시작 ===")
     ai.train()
     epochs = 200
 
-    # Warmup / Compile
-    with torch.amp.autocast("cuda"):
-        logits, length_logits, _ = ai(
-            batch_prompt_ids, attention_mask=batch_attention_mask
-        )
-
-        token_loss = loss_token_fn(
-            logits.view(-1, ai.vocab_size), padded_targets.view(-1)
-        )
-        length_loss = loss_length_fn(length_logits, length_targets)
-
-        total_loss = token_loss + 1.0 * length_loss
-
-    optimizer.zero_grad(set_to_none=True)
-
-    # 단 1번만 backward 실행! (retain_graph 불필요)
-    scaler.scale(total_loss).backward()
-
-    scaler.step(optimizer)
-    scaler.update()
-
-    torch.cuda.synchronize()
     start_time = time.time()
 
     for epoch in range(1, epochs + 1):
-        optimizer.zero_grad(set_to_none=True)
+        epoch_loss = 0.0
 
-        with torch.amp.autocast("cuda"):
-            logits, length_logits, _ = ai(
-                batch_prompt_ids, attention_mask=batch_attention_mask
-            )
+        for b_prompt, b_mask, b_target, b_len_target in train_loader:
+            optimizer.zero_grad(set_to_none=True)
 
-            token_loss = loss_token_fn(
-                logits.view(-1, ai.vocab_size), padded_targets.view(-1)
-            )
-            length_loss = loss_length_fn(length_logits, length_targets)
-            loss = token_loss + 1.0 * length_loss
+            with torch.amp.autocast("cuda"):
+                logits, length_logits, _ = ai(b_prompt, attention_mask=b_mask)
 
-        scaler.scale(loss).backward()
-        scaler.step(optimizer)
-        scaler.update()
+                token_loss = loss_token_fn(
+                    logits.view(-1, ai.vocab_size), b_target.view(-1)
+                )
+                length_loss = loss_length_fn(length_logits, b_len_target)
+                loss = token_loss + 1.0 * length_loss
+
+            scaler.scale(loss).backward()
+            scaler.step(optimizer)
+            scaler.update()
+
+            epoch_loss += loss.item()
 
         if epoch % 50 == 0:
-            print(f"Epoch {epoch}/{epochs} - Loss: {loss.item():.4f}")
+            avg_loss = epoch_loss / len(train_loader)
+            print(f"Epoch {epoch}/{epochs} - Avg Loss: {avg_loss:.4f}")
 
     torch.cuda.synchronize()
     end_time = time.time()
