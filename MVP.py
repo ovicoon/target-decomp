@@ -65,7 +65,7 @@ class DecomposerBlock(nn.Module):
 
 
 class VectorDecomposer(nn.Module):
-    def __init__(self, max_n: int, dim: int, alpha: float = 0.1, num_layers: int = 4):
+    def __init__(self, max_n: int, dim: int, alpha: float = 0.5, num_layers: int = 4):
         super().__init__()
         self.max_n = max_n  # N
         self.dim = dim  # D
@@ -228,8 +228,8 @@ class OneShotDecomposedAI(nn.Module):
 # 5. CSV 데이터 로드 및 학습
 # ===============================================================
 if __name__ == "__main__":
-    TARGET_LOSS = 1.2  # 🎯 목표 Loss (1.0~1.5 사이 권장)
-    PATIENCE = 10  # TARGET_LOSS 이하로 내려간 뒤 몇 Epoch 동안 유지되면 종료할지
+    TARGET_LOSS = 1.5  # 🎯 목표 Loss (1.0~1.5 사이 권장)
+    PATIENCE = 3  # TARGET_LOSS 이하로 내려간 뒤 몇 Epoch 동안 유지되면 종료할지
     patience_counter = 0
     best_loss = float("inf")
     MAX_N = 32
@@ -240,7 +240,7 @@ if __name__ == "__main__":
     ai = torch.compile(ai, mode="default")
     ai = ai.to(device=device)
 
-    MAX_SAMPLES = 200
+    MAX_SAMPLES = 2000
 
     ai.tokenizer.padding_side = "left"
     if ai.tokenizer.pad_token is None:
@@ -306,7 +306,7 @@ if __name__ == "__main__":
     dataset = TensorDataset(
         batch_prompt_ids, batch_attention_mask, padded_targets, length_targets
     )
-    train_loader = DataLoader(dataset, batch_size=8, shuffle=True)  # 배치 크기 8 설정!
+    train_loader = DataLoader(dataset, batch_size=16, shuffle=True)
 
     # 2. Optimizer 설정 (동일)
     trainable_params = (
@@ -323,7 +323,7 @@ if __name__ == "__main__":
     # 3. Epoch 학습 루프 수정
     print("\n=== 미니배치 기반 원샷 학습 시작 ===")
     ai.train()
-    epochs = 250
+    epochs = 100
 
     start_time = time.time()
 
@@ -350,7 +350,7 @@ if __name__ == "__main__":
 
         avg_loss = epoch_loss / len(train_loader)
 
-        if epoch % 10 == 0:
+        if epoch % 1 == 0:
             print(f"Epoch {epoch}/{epochs} - Avg Loss: {avg_loss:.4f}")
 
         if avg_loss <= TARGET_LOSS:
