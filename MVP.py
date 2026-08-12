@@ -117,7 +117,7 @@ class VectorDecomposer(nn.Module):
 # 3. 토큰 개수 예측 모듈
 # ===============================================================
 # 1. LengthPredictor의 마지막 레이어를 1차원 scalar로 변경
-class RegressionLengthPredictor(nn.Module):
+class LengthPredictor(nn.Module):
     def __init__(self, embed_dim: int):
         super().__init__()
         self.net = nn.Sequential(
