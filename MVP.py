@@ -5,6 +5,7 @@ import torch
 import torch.nn as nn
 import torch.nn.functional as F
 from transformers import AutoModelForCausalLM, AutoTokenizer
+from torch.utils.data import DataLoader, TensorDataset
 
 torch.backends.cudnn.benchmark = True
 
