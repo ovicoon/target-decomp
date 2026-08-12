@@ -158,7 +158,7 @@ class OneShotDecomposedAI(nn.Module):
         for param in self.embedding.parameters():
             param.requires_grad = False
         for param in self.lm_head.parameters():
-            param.requires_grad = False
+            param.requires_grad = True
 
         self.attention_target = SingleStepAttention(self.embed_dim, self.embed_dim)
         self.decomposer = VectorDecomposer(max_n=max_n, dim=self.embed_dim, alpha=alpha)
