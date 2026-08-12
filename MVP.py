@@ -312,7 +312,7 @@ if __name__ == "__main__":
     # 4. 학습 시작
     print("\n=== CSV 대화 데이터 기반 원샷 학습 시작 ===")
     ai.train()
-    epochs = 400
+    epochs = 300
 
     # Warmup / Compile
     with torch.amp.autocast("cuda"):
