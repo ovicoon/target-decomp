@@ -235,17 +235,19 @@ if __name__ == "__main__":
     targets = []
 
     for idx, row in df.iterrows():
-        try:
-            dialog_str = str(row["dialog"])
-            utterances = re.findall(r"['\"]+(.*?)['\"]+", dialog_str, re.DOTALL)
-            utterances = [u.strip() for u in utterances if u.strip()]
+        dialog_str = str(row["dialog"])
+        utterances = re.findall(r"['\"]+(.*?)['\"]+", dialog_str, re.DOTALL)
+        utterances = [u.strip() for u in utterances if u.strip()]
 
-            if len(utterances) < 2:
-                continue
+        # 짝수번째(유저) -> 홀수번째(AI)로 이어지는 모든 슬라이딩 윈도우 생성
+        for i in range(1, len(utterances)):
+            # i번째 발화를 Target(답변)으로, 그 전(0~i-1)까지를 Prompt(맥락)로 설정
+            prompt_dialogs = utterances[:i]
+            target_text = utterances[i]
 
             messages = []
-            for i, text in enumerate(utterances[:-1]):
-                role = "user" if i % 2 == 0 else "assistant"
+            for j, text in enumerate(prompt_dialogs):
+                role = "user" if j % 2 == 0 else "assistant"
                 messages.append({"role": role, "content": text})
 
             formatted = ai.tokenizer.apply_chat_template(
@@ -253,11 +255,7 @@ if __name__ == "__main__":
             )
 
             formatted_prompts.append(formatted)
-            targets.append(utterances[-1])
-
-        except Exception as e:
-            continue
-
+            targets.append(target_text)
     print(f"총 {len(formatted_prompts)}개의 대화 데이터셋 구성 완료!")
 
     if len(formatted_prompts) == 0:
@@ -352,12 +350,36 @@ if __name__ == "__main__":
     print(f"학습 소요 시간: {end_time - start_time:.4f}초")
 
     print("\n=== 대화 테스트 (Regression Predictor) ===")
-    while True:
-        test_prompt = input("User 입력 >>>: ")
+    # 추론 시 대화 히스토리(Context)를 누적하는 예시
+    conversation_history = []
 
-        if test_prompt == "exit":
+    while True:
+        user_input = input("User 입력 >>>: ")
+        if user_input == "exit":
             break
 
-        gen_text, pred_len, raw_len = ai.generate(test_prompt, device=device)
-        print(f"예측된 토큰 수 : {pred_len}개 (Raw float: {raw_len:.2f})")
-        print(f"AI 원샷 답변 : '{gen_text}'\n")
+        # 1. 유저 발화를 히스토리에 추가
+        conversation_history.append({"role": "user", "content": user_input})
+
+        # 2. 전체 대화 히스토리를 챗 템플릿으로 변환
+        formatted_prompt = ai.tokenizer.apply_chat_template(
+            conversation_history, tokenize=False, add_generation_prompt=True
+        )
+
+        # 3. 모델 추론 진행
+        prompt_inputs = ai.tokenizer(formatted_prompt, return_tensors="pt").to(device)
+        logits, length_logits, target_x = ai(
+            prompt_inputs.input_ids, attention_mask=prompt_inputs.attention_mask
+        )
+
+        raw_len = length_logits.squeeze().item()
+        predicted_len = max(1, min(int(round(raw_len)), MAX_N))
+
+        pred_ids = torch.argmax(logits[0, :predicted_len, :], dim=-1)
+        ai_response = ai.tokenizer.decode(pred_ids, skip_special_tokens=True)
+
+        print(f"예측된 토큰 수 : {predicted_len}개 (Raw float: {raw_len:.2f})")
+        print(f"AI 원샷 답변 : '{ai_response}'\n")
+
+        # 4. AI 답변도 다음 턴을 위해 히스토리에 추가!
+        conversation_history.append({"role": "assistant", "content": ai_response})
