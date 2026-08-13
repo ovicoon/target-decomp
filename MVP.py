@@ -357,6 +357,10 @@ if __name__ == "__main__":
         user_input = input("User 입력 >>>: ")
         if user_input == "exit":
             break
+        elif user_input == "reset":
+            conversation_history = []
+            print("대화 히스토리 초기화 완료!")
+            continue
 
         # 1. 유저 발화를 히스토리에 추가
         conversation_history.append({"role": "user", "content": user_input})
