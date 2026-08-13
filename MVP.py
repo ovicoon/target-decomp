@@ -209,7 +209,7 @@ if __name__ == "__main__":
     PATIENCE = 3
     patience_counter = 0
     best_loss = float("inf")
-    MAX_N = 32
+    MAX_N = 64
 
     device = "cuda" if torch.cuda.is_available() else "cpu"
 
