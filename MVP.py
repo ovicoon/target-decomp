@@ -112,8 +112,9 @@ class VectorDecomposer(nn.Module):
 class LengthPredictor(nn.Module):
     def __init__(self, embed_dim: int):
         super().__init__()
+        # [수정] target_x(embed_dim) + query(embed_dim) = embed_dim * 2
         self.net = nn.Sequential(
-            nn.Linear(embed_dim, 256),
+            nn.Linear(embed_dim * 2, 256),
             nn.LayerNorm(256),
             nn.GELU(),
             nn.Dropout(0.1),
@@ -163,10 +164,7 @@ class OneShotDecomposedAI(nn.Module):
     def forward(self, prompt_ids: torch.Tensor, attention_mask: torch.Tensor = None):
         embeddings = self.embedding(prompt_ids)
 
-        # -------------------------------------------------------------
-        # [개조] 프롬프트 전체 Mean Pooling (평균 벡터 추출)
-        # 마지막 토큰이 아닌 전체 평균을 사용하여 앵무새 현상 차단
-        # -------------------------------------------------------------
+        # 1. 프롬프트 Mean Pooling (query)
         if attention_mask is not None:
             mask_expanded = attention_mask.unsqueeze(-1).expand_as(embeddings)
             sum_embeddings = torch.sum(embeddings * mask_expanded, dim=1)
@@ -175,12 +173,18 @@ class OneShotDecomposedAI(nn.Module):
         else:
             query = embeddings.mean(dim=1, keepdim=True)  # [B, 1, Dim]
 
+        # 2. Target 벡터 추출
         target_x = self.attention_target(
             query=query, key_value=embeddings, attn_mask=attention_mask
-        )
-        length_logits = self.length_predictor(target_x)
+        )  # [B, Dim]
 
-        # [개조] decomposer로 target_x와 함께 프롬프트 평균 벡터(query) 전달
+        # -------------------------------------------------------------
+        # [수정] LengthPredictor에 target_x와 query(평균)를 결합하여 전달!
+        # -------------------------------------------------------------
+        combined_feat = torch.cat([target_x, query.squeeze(1)], dim=-1)  # [B, Dim * 2]
+        length_logits = self.length_predictor(combined_feat)
+
+        # 3. Decomposer 및 LM Head
         v = self.decomposer(target_x, raw_query=query)
         logits = self.lm_head(v)
 
