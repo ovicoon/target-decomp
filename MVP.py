@@ -11,7 +11,7 @@ torch.backends.cudnn.benchmark = True
 
 
 # ===============================================================
-# 1. Target Vector 생성 모듈
+# 1. Target Vector 생성 및 Decomposer 모듈
 # ===============================================================
 class SingleStepAttention(nn.Module):
     def __init__(self, embed_dim: int, target_dim: int):
@@ -73,9 +73,15 @@ class VectorDecomposer(nn.Module):
         self.blocks = nn.ModuleList(
             [DecomposerBlock(dim=dim) for _ in range(num_layers)]
         )
+        # [개조] 프롬프트 평균 벡터(raw_query)의 섞임 비중을 제어하는 학습 가능 파라미터
+        self.res_scale = nn.Parameter(torch.tensor(0.5))
         self.out_proj = nn.Sequential(nn.LayerNorm(dim), nn.Linear(dim, dim))
 
-    def forward(self, x: torch.Tensor) -> torch.Tensor:
+    def forward(self, x: torch.Tensor, raw_query: torch.Tensor = None) -> torch.Tensor:
+        """
+        x: [B, D] -> target_x
+        raw_query: [B, 1, D] -> 프롬프트 전체의 평균 임베딩 (앵무새 현상 방지용 잔차)
+        """
         B, D = x.shape
         N = self.max_n
 
@@ -89,6 +95,13 @@ class VectorDecomposer(nn.Module):
 
         for block in self.blocks:
             v = block(v)
+
+        # -------------------------------------------------------------
+        # [개조] 프롬프트 전체 평균 벡터를 방송(Broadcasting) 방식으로 합산
+        # 1개 벡터 병목 완화 및 앵무새 현상 방지
+        # -------------------------------------------------------------
+        if raw_query is not None:
+            v = v + self.res_scale * raw_query
 
         return self.out_proj(v)
 
@@ -107,7 +120,7 @@ class LengthPredictor(nn.Module):
             nn.Linear(256, 128),
             nn.LayerNorm(128),
             nn.GELU(),
-            nn.Linear(128, 1),  # 연속적인 scalar 출력
+            nn.Linear(128, 1),
         )
 
     def forward(self, x: torch.Tensor) -> torch.Tensor:
@@ -121,7 +134,7 @@ class OneShotDecomposedAI(nn.Module):
     def __init__(
         self,
         model_name: str = "Qwen/Qwen2.5-0.5B",
-        max_n: int = 16,
+        max_n: int = 64,
     ):
         super().__init__()
         self.max_n = max_n
@@ -145,25 +158,30 @@ class OneShotDecomposedAI(nn.Module):
 
         self.attention_target = SingleStepAttention(self.embed_dim, self.embed_dim)
         self.decomposer = VectorDecomposer(max_n=max_n, dim=self.embed_dim)
-        # [수정] max_n 인자 제거
         self.length_predictor = LengthPredictor(embed_dim=self.embed_dim)
 
     def forward(self, prompt_ids: torch.Tensor, attention_mask: torch.Tensor = None):
         embeddings = self.embedding(prompt_ids)
 
+        # -------------------------------------------------------------
+        # [개조] 프롬프트 전체 Mean Pooling (평균 벡터 추출)
+        # 마지막 토큰이 아닌 전체 평균을 사용하여 앵무새 현상 차단
+        # -------------------------------------------------------------
         if attention_mask is not None:
             mask_expanded = attention_mask.unsqueeze(-1).expand_as(embeddings)
             sum_embeddings = torch.sum(embeddings * mask_expanded, dim=1)
             sum_mask = mask_expanded.sum(dim=1).clamp(min=1e-9)
-            query = (sum_embeddings / sum_mask).unsqueeze(1)
+            query = (sum_embeddings / sum_mask).unsqueeze(1)  # [B, 1, Dim]
         else:
-            query = embeddings.mean(dim=1, keepdim=True)
+            query = embeddings.mean(dim=1, keepdim=True)  # [B, 1, Dim]
 
         target_x = self.attention_target(
             query=query, key_value=embeddings, attn_mask=attention_mask
         )
         length_logits = self.length_predictor(target_x)
-        v = self.decomposer(target_x)
+
+        # [개조] decomposer로 target_x와 함께 프롬프트 평균 벡터(query) 전달
+        v = self.decomposer(target_x, raw_query=query)
         logits = self.lm_head(v)
 
         return logits, length_logits, target_x
@@ -191,7 +209,6 @@ class OneShotDecomposedAI(nn.Module):
                 f"[DEBUG x 벡터 샘플]: {sample_val[0]:.4f}, {sample_val[1]:.4f}, {sample_val[2]:.4f}"
             )
 
-            # [수정] Regression 예측값을 정수로 변환하여 사용
             raw_len = length_logits.squeeze().item()
             predicted_len = int(round(raw_len))
             predicted_len = max(1, min(predicted_len, self.max_n))
@@ -209,7 +226,7 @@ if __name__ == "__main__":
     PATIENCE = 3
     patience_counter = 0
     best_loss = float("inf")
-    MAX_N = 64
+    MAX_N = 64  # 64 설정 적용
 
     device = "cuda" if torch.cuda.is_available() else "cpu"
 
@@ -239,9 +256,7 @@ if __name__ == "__main__":
         utterances = re.findall(r"['\"]+(.*?)['\"]+", dialog_str, re.DOTALL)
         utterances = [u.strip() for u in utterances if u.strip()]
 
-        # 짝수번째(유저) -> 홀수번째(AI)로 이어지는 모든 슬라이딩 윈도우 생성
         for i in range(1, len(utterances)):
-            # i번째 발화를 Target(답변)으로, 그 전(0~i-1)까지를 Prompt(맥락)로 설정
             prompt_dialogs = utterances[:i]
             target_text = utterances[i]
 
@@ -350,7 +365,6 @@ if __name__ == "__main__":
     print(f"학습 소요 시간: {end_time - start_time:.4f}초")
 
     print("\n=== 대화 테스트 (Regression Predictor) ===")
-    # 추론 시 대화 히스토리(Context)를 누적하는 예시
     conversation_history = []
 
     while True:
@@ -362,15 +376,12 @@ if __name__ == "__main__":
             print("대화 히스토리 초기화 완료!")
             continue
 
-        # 1. 유저 발화를 히스토리에 추가
         conversation_history.append({"role": "user", "content": user_input})
 
-        # 2. 전체 대화 히스토리를 챗 템플릿으로 변환
         formatted_prompt = ai.tokenizer.apply_chat_template(
             conversation_history, tokenize=False, add_generation_prompt=True
         )
 
-        # 3. 모델 추론 진행
         prompt_inputs = ai.tokenizer(formatted_prompt, return_tensors="pt").to(device)
         logits, length_logits, target_x = ai(
             prompt_inputs.input_ids, attention_mask=prompt_inputs.attention_mask
@@ -385,5 +396,4 @@ if __name__ == "__main__":
         print(f"예측된 토큰 수 : {predicted_len}개 (Raw float: {raw_len:.2f})")
         print(f"AI 원샷 답변 : '{ai_response}'\n")
 
-        # 4. AI 답변도 다음 턴을 위해 히스토리에 추가!
         conversation_history.append({"role": "assistant", "content": ai_response})
