@@ -317,7 +317,7 @@ if __name__ == "__main__":
 
     print("\n=== 미니배치 기반 원샷 학습 시작 (Regression Length Predictor) ===")
     ai.train()
-    epochs = 50
+    epochs = 15
 
     start_time = time.time()
 
