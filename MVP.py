@@ -290,7 +290,7 @@ if __name__ == "__main__":
         + list(ai.length_predictor.parameters())
         + list(ai.lm_head.parameters())
     )
-    optimizer = torch.optim.AdamW(trainable_params, lr=1e-3)
+    optimizer = torch.optim.AdamW(trainable_params, lr=3e-5)
 
     loss_token_fn = nn.CrossEntropyLoss(ignore_index=-100)
     loss_length_fn = nn.SmoothL1Loss()
