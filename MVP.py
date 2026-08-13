@@ -301,7 +301,7 @@ if __name__ == "__main__":
     dataset = TensorDataset(
         batch_prompt_ids, batch_attention_mask, padded_targets, length_targets_float
     )
-    train_loader = DataLoader(dataset, batch_size=32, shuffle=True)
+    train_loader = DataLoader(dataset, batch_size=64, shuffle=True)
 
     trainable_params = (
         list(ai.attention_target.parameters())
